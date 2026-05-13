@@ -27,24 +27,29 @@ public class AutoClicker extends Module {
     private boolean blockHitPending = false;
     private long blockHitDelay = 0L;
 
-    // Track clicks so we can apply block-hit chance per hit
-    private int clicksSinceLastBlockHit = 0;
-    private int nextBlockHitAt = 0;
+    // How many left-clicks until next block hit fires
+    private int clicksUntilBlockHit = 0;
 
     public final IntProperty minCPS = new IntProperty("min-cps", 8, 1, 20);
     public final IntProperty maxCPS = new IntProperty("max-cps", 12, 1, 20);
+
     public final BooleanProperty blockHit = new BooleanProperty("block-hit", false);
-    public final FloatProperty blockHitTicks = new FloatProperty("block-hit-ticks", 1.5F, 1.0F, 20.0F, this.blockHit::getValue);
-    // Chance 0-100% that a block hit fires automatically when hitting a player
-    public final IntProperty blockHitChance = new IntProperty("block-hit-chance", 50, 1, 100, this.blockHit::getValue);
-    // Auto block hit - fires block hit automatically without needing RMB held
-    public final BooleanProperty autoBlockHit = new BooleanProperty("auto-block-hit", true, this.blockHit::getValue);
+    public final FloatProperty blockHitTicks = new FloatProperty(
+            "block-hit-ticks", 1.5F, 1.0F, 20.0F, this.blockHit::getValue);
+    // 100% = block-hit fires on every single click, 50% = roughly every 2 clicks
+    public final IntProperty blockHitChance = new IntProperty(
+            "block-hit-chance", 50, 1, 100, this.blockHit::getValue);
+
     public final BooleanProperty weaponsOnly = new BooleanProperty("weapons-only", true);
-    public final BooleanProperty allowTools = new BooleanProperty("allow-tools", false, this.weaponsOnly::getValue);
+    public final BooleanProperty allowTools = new BooleanProperty(
+            "allow-tools", false, this.weaponsOnly::getValue);
     public final BooleanProperty breakBlocks = new BooleanProperty("break-blocks", true);
-    public final FloatProperty range = new FloatProperty("range", 3.0F, 3.0F, 8.0F, this.breakBlocks::getValue);
-    public final FloatProperty hitBoxVertical = new FloatProperty("hit-box-vertical", 0.1F, 0.0F, 1.0F, this.breakBlocks::getValue);
-    public final FloatProperty hitBoxHorizontal = new FloatProperty("hit-box-horizontal", 0.2F, 0.0F, 1.0F, this.breakBlocks::getValue);
+    public final FloatProperty range = new FloatProperty(
+            "range", 3.0F, 3.0F, 8.0F, this.breakBlocks::getValue);
+    public final FloatProperty hitBoxVertical = new FloatProperty(
+            "hit-box-vertical", 0.1F, 0.0F, 1.0F, this.breakBlocks::getValue);
+    public final FloatProperty hitBoxHorizontal = new FloatProperty(
+            "hit-box-horizontal", 0.2F, 0.0F, 1.0F, this.breakBlocks::getValue);
 
     public AutoClicker() {
         super("AutoClicker", false);
@@ -53,105 +58,77 @@ public class AutoClicker extends Module {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private long getNextClickDelay() {
-        return 1000L / RandomUtil.nextLong(this.minCPS.getValue(), this.maxCPS.getValue());
+        return 1000L / RandomUtil.nextLong(minCPS.getValue(), maxCPS.getValue());
     }
 
     private long getBlockHitDelay() {
-        return (long) (50.0F * this.blockHitTicks.getValue());
+        return (long) (50.0F * blockHitTicks.getValue());
     }
 
     private boolean isBreakingBlock() {
-        return mc.objectMouseOver != null && mc.objectMouseOver.typeOfHit == MovingObjectType.BLOCK;
+        return mc.objectMouseOver != null
+                && mc.objectMouseOver.typeOfHit == MovingObjectType.BLOCK;
     }
 
     private boolean canClick() {
-        if (!this.weaponsOnly.getValue()
+        if (!weaponsOnly.getValue()
                 || ItemUtil.hasRawUnbreakingEnchant()
-                || this.allowTools.getValue() && ItemUtil.isHoldingTool()) {
-            if (this.breakBlocks.getValue() && this.isBreakingBlock() && !this.hasValidTarget()) {
-                GameType gameType = mc.playerController.getCurrentGameType();
-                return gameType != GameType.SURVIVAL && gameType != GameType.CREATIVE;
-            } else {
-                return true;
+                || allowTools.getValue() && ItemUtil.isHoldingTool()) {
+            if (breakBlocks.getValue() && isBreakingBlock() && !hasValidTarget()) {
+                GameType gt = mc.playerController.getCurrentGameType();
+                return gt != GameType.SURVIVAL && gt != GameType.CREATIVE;
             }
-        } else {
-            return false;
+            return true;
         }
+        return false;
     }
 
-    private boolean isValidTarget(EntityPlayer entityPlayer) {
-        if (entityPlayer != mc.thePlayer && entityPlayer != mc.thePlayer.ridingEntity) {
-            if (entityPlayer == mc.getRenderViewEntity()
-                    || entityPlayer == mc.getRenderViewEntity().ridingEntity) {
-                return false;
-            } else if (entityPlayer.deathTime > 0) {
-                return false;
-            } else {
-                float borderSize = entityPlayer.getCollisionBorderSize();
-                return RotationUtil.rayTrace(
-                        entityPlayer.getEntityBoundingBox().expand(
-                                borderSize + this.hitBoxHorizontal.getValue(),
-                                borderSize + this.hitBoxVertical.getValue(),
-                                borderSize + this.hitBoxHorizontal.getValue()
-                        ),
-                        mc.thePlayer.rotationYaw,
-                        mc.thePlayer.rotationPitch,
-                        this.range.getValue()
-                ) != null;
-            }
-        } else {
-            return false;
-        }
+    private boolean isValidTarget(EntityPlayer p) {
+        if (p == mc.thePlayer || p == mc.thePlayer.ridingEntity) return false;
+        if (p == mc.getRenderViewEntity()
+                || p == mc.getRenderViewEntity().ridingEntity) return false;
+        if (p.deathTime > 0) return false;
+        float b = p.getCollisionBorderSize();
+        return RotationUtil.rayTrace(
+                p.getEntityBoundingBox().expand(
+                        b + hitBoxHorizontal.getValue(),
+                        b + hitBoxVertical.getValue(),
+                        b + hitBoxHorizontal.getValue()),
+                mc.thePlayer.rotationYaw,
+                mc.thePlayer.rotationPitch,
+                range.getValue()
+        ) != null;
     }
 
     private boolean hasValidTarget() {
-        return mc.theWorld
-                .loadedEntityList
-                .stream()
+        return mc.theWorld.loadedEntityList.stream()
                 .filter(e -> e instanceof EntityPlayer)
                 .map(e -> (EntityPlayer) e)
                 .anyMatch(this::isValidTarget);
     }
 
     /**
-     * Roll the block-hit chance and schedule the next auto block-hit interval.
-     * Uses the chance property so e.g. 50% means roughly every 2 hits a block-hit fires.
+     * Schedule the next block-hit interval from the chance %.
+     * 100% -> every 1 click, 50% -> every 2 clicks, 10% -> every 10 clicks.
+     * A small random jitter of ±1 is added so the pattern looks human.
      */
-    private void rollNextBlockHit() {
-        // Convert chance % into a hit interval
-        // e.g. 100% = every 1 click, 50% = every 2 clicks, 25% = every 4 clicks
-        int chance = this.blockHitChance.getValue();
-        // Random factor ±1 around the interval so it looks human
-        int interval = Math.max(1, (int) Math.round(100.0 / chance));
-        int jitter = interval > 1 ? random.nextInt(2) : 0;
-        this.nextBlockHitAt = this.clicksSinceLastBlockHit + interval + jitter;
+    private void scheduleNextBlockHit() {
+        int interval = Math.max(1, (int) Math.round(100.0 / blockHitChance.getValue()));
+        int jitter = interval > 1 ? random.nextInt(3) - 1 : 0; // -1, 0 or +1
+        clicksUntilBlockHit = Math.max(1, interval + jitter);
     }
 
     /**
-     * Check if the auto block-hit should fire this click.
-     */
-    private boolean shouldAutoBlockHit() {
-        if (!this.blockHit.getValue()) return false;
-        if (!this.autoBlockHit.getValue()) return false;
-        if (!ItemUtil.isHoldingSword()) return false;
-        if (!this.hasValidTarget()) return false;
-        if (this.blockHitDelay > 0L) return false;
-        return this.clicksSinceLastBlockHit >= this.nextBlockHitAt;
-    }
-
-    /**
-     * Fire the block-hit: briefly press RMB so the server sees a sword block,
-     * then release it the next tick via blockHitPending.
+     * Actually fire the block-hit: press RMB once.
+     * Uses the exact same KeyBind approach as the original.
      */
     private void fireBlockHit() {
-        this.blockHitPending = true;
-        this.blockHitDelay = this.blockHitDelay + this.getBlockHitDelay();
+        if (mc.thePlayer.isUsingItem()) return;
+        blockHitPending = true;
+        blockHitDelay += getBlockHitDelay();
         KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), false);
-        if (!mc.thePlayer.isUsingItem()) {
-            KeyBindUtil.pressKeyOnce(mc.gameSettings.keyBindUseItem.getKeyCode());
-        }
-        this.clicksSinceLastBlockHit = 0;
-        rollNextBlockHit();
+        KeyBindUtil.pressKeyOnce(mc.gameSettings.keyBindUseItem.getKeyCode());
+        scheduleNextBlockHit();
     }
 
     // ── Events ────────────────────────────────────────────────────────────────
@@ -160,106 +137,86 @@ public class AutoClicker extends Module {
     public void onTick(TickEvent event) {
         if (event.getType() != EventType.PRE) return;
 
-        // Drain delays every tick regardless of enabled state
-        if (this.clickDelay > 0L) {
-            this.clickDelay -= 50L;
-        }
-        if (this.blockHitDelay > 0L) {
-            this.blockHitDelay -= 50L;
-        }
+        // Always drain delays
+        if (clickDelay > 0L) clickDelay -= 50L;
+        if (blockHitDelay > 0L) blockHitDelay -= 50L;
 
         if (mc.currentScreen != null) {
-            this.clickPending = false;
-            this.blockHitPending = false;
+            clickPending = false;
+            blockHitPending = false;
             return;
         }
 
-        // Release pending key states from last tick
-        if (this.clickPending) {
-            this.clickPending = false;
+        // Release key states that were pressed last tick
+        if (clickPending) {
+            clickPending = false;
             KeyBindUtil.updateKeyState(mc.gameSettings.keyBindAttack.getKeyCode());
         }
-        if (this.blockHitPending) {
-            this.blockHitPending = false;
+        if (blockHitPending) {
+            blockHitPending = false;
             KeyBindUtil.updateKeyState(mc.gameSettings.keyBindUseItem.getKeyCode());
         }
 
-        if (!this.isEnabled()) return;
-        if (!this.canClick()) return;
+        if (!isEnabled() || !canClick()) return;
         if (!mc.gameSettings.keyBindAttack.isKeyDown()) return;
         if (mc.thePlayer.isUsingItem()) return;
 
-        // ── Left click spam ───────────────────────────────────────────────────
-        while (this.clickDelay <= 0L) {
-            this.clickPending = true;
-            this.clickDelay += this.getNextClickDelay();
+        // ── Left-click ────────────────────────────────────────────────────────
+        while (clickDelay <= 0L) {
+            clickPending = true;
+            clickDelay += getNextClickDelay();
             KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindAttack.getKeyCode(), false);
             KeyBindUtil.pressKeyOnce(mc.gameSettings.keyBindAttack.getKeyCode());
 
-            // Track how many clicks since last block-hit
-            this.clicksSinceLastBlockHit++;
+            // ── Block-hit chance gate ─────────────────────────────────────────
+            if (blockHit.getValue()
+                    && ItemUtil.isHoldingSword()
+                    && hasValidTarget()
+                    && blockHitDelay <= 0L) {
 
-            // Auto block-hit check - fires automatically based on chance %
-            if (shouldAutoBlockHit()) {
-                fireBlockHit();
-                // Skip manual RMB check below since we already fired
-                return;
-            }
-        }
+                clicksUntilBlockHit--;
 
-        // ── Manual block-hit (RMB held) with chance gate ──────────────────────
-        if (this.blockHit.getValue()
-                && !this.autoBlockHit.getValue()
-                && this.blockHitDelay <= 0L
-                && mc.gameSettings.keyBindUseItem.isKeyDown()
-                && ItemUtil.isHoldingSword()) {
-            // Only fire if chance roll passes
-            if (random.nextInt(100) < this.blockHitChance.getValue()) {
-                fireBlockHit();
+                if (clicksUntilBlockHit <= 0) {
+                    fireBlockHit();
+                    // Break out so we don't fire multiple block-hits in one tick
+                    break;
+                }
             }
         }
     }
 
     @EventTarget(Priority.LOWEST)
     public void onCLick(LeftClickMouseEvent event) {
-        if (this.isEnabled() && !event.isCancelled()) {
-            if (!this.clickPending) {
-                this.clickDelay += this.getNextClickDelay();
-            }
+        if (isEnabled() && !event.isCancelled() && !clickPending) {
+            clickDelay += getNextClickDelay();
         }
     }
 
     @Override
     public void onEnabled() {
-        this.clickDelay = 0L;
-        this.blockHitDelay = 0L;
-        this.clicksSinceLastBlockHit = 0;
-        rollNextBlockHit();
+        clickDelay = 0L;
+        blockHitDelay = 0L;
+        scheduleNextBlockHit();
     }
 
     @Override
     public void onDisabled() {
-        this.clicksSinceLastBlockHit = 0;
-        this.nextBlockHitAt = 0;
+        clicksUntilBlockHit = 0;
     }
 
     @Override
     public void verifyValue(String mode) {
-        if (this.minCPS.getName().equals(mode)) {
-            if (this.minCPS.getValue() > this.maxCPS.getValue()) {
-                this.maxCPS.setValue(this.minCPS.getValue());
-            }
-        } else {
-            if (this.maxCPS.getName().equals(mode) && this.minCPS.getValue() > this.maxCPS.getValue()) {
-                this.minCPS.setValue(this.maxCPS.getValue());
-            }
+        if (minCPS.getName().equals(mode)) {
+            if (minCPS.getValue() > maxCPS.getValue()) maxCPS.setValue(minCPS.getValue());
+        } else if (maxCPS.getName().equals(mode)) {
+            if (minCPS.getValue() > maxCPS.getValue()) minCPS.setValue(maxCPS.getValue());
         }
     }
 
     @Override
     public String[] getSuffix() {
-        return Objects.equals(this.minCPS.getValue(), this.maxCPS.getValue())
-                ? new String[]{this.minCPS.getValue().toString()}
-                : new String[]{String.format("%d-%d", this.minCPS.getValue(), this.maxCPS.getValue())};
+        return Objects.equals(minCPS.getValue(), maxCPS.getValue())
+                ? new String[]{minCPS.getValue().toString()}
+                : new String[]{String.format("%d-%d", minCPS.getValue(), maxCPS.getValue())};
     }
 }

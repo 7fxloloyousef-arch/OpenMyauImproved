@@ -55,26 +55,22 @@ public class Wtap extends Module {
         if (!isEnabled()) return;
 
         if (this.active) {
-            // If player stopped sprinting or hit a wall, cancel the wtap
             if (!this.stopForward && !this.canTrigger()) {
                 resetState();
                 return;
             }
 
-            // Delay phase - wait before stopping forward movement
             if (this.delayTicks > 0L) {
                 this.delayTicks -= 50L;
                 return;
             }
 
-            // Duration phase - stop forward movement
             if (this.durationTicks > 0L) {
                 this.durationTicks -= 50L;
                 this.stopForward = true;
                 mc.thePlayer.movementInput.moveForward = 0.0F;
             }
 
-            // Duration expired, end wtap
             if (this.durationTicks <= 0L) {
                 resetState();
             }
@@ -92,7 +88,7 @@ public class Wtap extends Module {
 
         if (packet.getAction() == Action.ATTACK
                 && !this.active
-                && this.timer.hasTimeElapsed((long) cooldown.getValue())
+                && this.timer.hasTimeElapsed((long) ((float) cooldown.getValue()))
                 && mc.thePlayer.isSprinting()) {
             this.timer.reset();
             this.active = true;

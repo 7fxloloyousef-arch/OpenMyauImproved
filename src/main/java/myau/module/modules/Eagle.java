@@ -6,7 +6,6 @@ import myau.event.types.Priority;
 import myau.events.MoveInputEvent;
 import myau.events.TickEvent;
 import myau.module.Module;
-import myau.util.ItemUtil;
 import myau.util.MoveUtil;
 import myau.util.PlayerUtil;
 import myau.property.properties.BooleanProperty;
@@ -22,9 +21,6 @@ import java.util.Objects;
 public class Eagle extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
     private int sneakDelay = 0;
-    private boolean wasHoldingBlock = false;
-    private int noBlockGraceTicks = 0;
-    private static final int GRACE_TICKS = 2;
 
     public final IntProperty minDelay = new IntProperty("min-delay", 2, 0, 10);
     public final IntProperty maxDelay = new IntProperty("max-delay", 3, 0, 10);
@@ -33,13 +29,27 @@ public class Eagle extends Module {
     public final BooleanProperty pitchCheck = new BooleanProperty("pitch-check", true);
     public final BooleanProperty blocksOnly = new BooleanProperty("blocks-only", true);
     public final BooleanProperty sneakOnly = new BooleanProperty("sneaking-only", false);
-    public final BooleanProperty safeStop = new BooleanProperty("safe-stop", true);
 
-    private boolean isHoldingBlockWithItems() {
-        ItemStack stack = mc.thePlayer.getHeldItem();
-        return stack != null
-                && stack.getItem() instanceof ItemBlock
-                && stack.stackSize > 0;
+    /**
+     * Count every block item stack across the entire hotbar (slots 0-8).
+     * Returns the total number of block items found.
+     */
+    private int countHotbarBlocks() {
+        int count = 0;
+        for (int i = 0; i < 9; i++) {
+            ItemStack stack = mc.thePlayer.inventory.getStackInSlot(i);
+            if (stack != null && stack.getItem() instanceof ItemBlock && stack.stackSize > 0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Returns true if the player has at least 1 block anywhere in their hotbar.
+     */
+    private boolean hotbarHasBlocks() {
+        return countHotbarBlocks() > 0;
     }
 
     private boolean canMoveSafely() {
@@ -50,27 +60,31 @@ public class Eagle extends Module {
         );
     }
 
-    private boolean hasBlocks() {
-        if (!blocksOnly.getValue()) return true;
-        boolean holding = isHoldingBlockWithItems();
-        // Grace period so sneak doesn't instantly release when blocks run out
-        if (wasHoldingBlock && !holding) {
-            noBlockGraceTicks = GRACE_TICKS;
-        }
-        wasHoldingBlock = holding;
-        if (!holding && noBlockGraceTicks > 0) {
-            return true; // still in grace, act as if we have blocks
-        }
-        return holding;
-    }
-
+    /**
+     * Core check - should we be sneaking right now?
+     * All conditions must pass. If blocksOnly is on, hotbar is scanned
+     * every call so the moment blocks hit 0 this returns false immediately.
+     */
     private boolean shouldSneak() {
+        // Must be on ground
         if (!mc.thePlayer.onGround) return false;
+
+        // Direction check
         if (directionCheck.getValue() && mc.gameSettings.keyBindForward.isKeyDown()) return false;
+
+        // Jump check
         if (jumpCheck.getValue() && mc.gameSettings.keyBindJump.isKeyDown()) return false;
+
+        // Pitch check
         if (pitchCheck.getValue() && mc.thePlayer.rotationPitch < 69.0F) return false;
-        if (sneakOnly.getValue() && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) return false;
-        if (!hasBlocks()) return false;
+
+        // Sneak-only check
+        if (sneakOnly.getValue()
+                && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) return false;
+
+        // Hotbar block check - scans every call so it reacts instantly
+        if (blocksOnly.getValue() && !hotbarHasBlocks()) return false;
+
         return true;
     }
 
@@ -82,16 +96,15 @@ public class Eagle extends Module {
     public void onTick(TickEvent event) {
         if (!isEnabled() || event.getType() != EventType.PRE) return;
 
-        // Drain grace ticks
-        if (noBlockGraceTicks > 0) {
-            noBlockGraceTicks--;
-        }
-
         if (sneakDelay > 0) {
             sneakDelay--;
         }
+
         if (sneakDelay == 0 && canMoveSafely()) {
-            sneakDelay = RandomUtils.nextInt(minDelay.getValue(), maxDelay.getValue() + 1);
+            sneakDelay = RandomUtils.nextInt(
+                    minDelay.getValue(),
+                    maxDelay.getValue() + 1
+            );
         }
     }
 
@@ -101,7 +114,8 @@ public class Eagle extends Module {
 
         boolean should = shouldSneak();
 
-        // sneakOnly mode - undo vanilla sneak speed penalty while our sneak is active
+        // sneakOnly mode - undo the vanilla sneak movement speed penalty
+        // while our sneak is active so the player moves at normal speed
         if (sneakOnly.getValue()
                 && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())
                 && should) {
@@ -116,13 +130,20 @@ public class Eagle extends Module {
             mc.thePlayer.movementInput.moveStrafe *= 0.3F;
             mc.thePlayer.movementInput.moveForward *= 0.3F;
         }
+
+        // Key moment - if shouldSneak() is false (no blocks, wrong pitch, etc.)
+        // force sneak off immediately so the player stops eagle instantly
+        if (!should) {
+            mc.thePlayer.movementInput.sneak = false;
+        }
     }
 
     @Override
     public void onDisabled() {
         sneakDelay = 0;
-        noBlockGraceTicks = 0;
-        wasHoldingBlock = false;
+        if (mc.thePlayer != null) {
+            mc.thePlayer.movementInput.sneak = false;
+        }
     }
 
     @Override

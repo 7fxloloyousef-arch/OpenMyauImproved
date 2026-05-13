@@ -27,8 +27,9 @@ public class AutoClicker extends Module {
     private boolean blockHitPending = false;
     private long blockHitDelay = 0L;
 
-    // How many left-clicks until next block hit fires
-    private int clicksUntilBlockHit = 0;
+    // counts clicks, fires block hit when it reaches clicksNeeded
+    private int clickCounter = 0;
+    private int clicksNeeded = 0;
 
     public final IntProperty minCPS = new IntProperty("min-cps", 8, 1, 20);
     public final IntProperty maxCPS = new IntProperty("max-cps", 12, 1, 20);
@@ -36,7 +37,7 @@ public class AutoClicker extends Module {
     public final BooleanProperty blockHit = new BooleanProperty("block-hit", false);
     public final FloatProperty blockHitTicks = new FloatProperty(
             "block-hit-ticks", 1.5F, 1.0F, 20.0F, this.blockHit::getValue);
-    // 100% = block-hit fires on every single click, 50% = roughly every 2 clicks
+    // 100 = every click gets a block hit, 1 = very rarely fires
     public final IntProperty blockHitChance = new IntProperty(
             "block-hit-chance", 50, 1, 100, this.blockHit::getValue);
 
@@ -108,19 +109,28 @@ public class AutoClicker extends Module {
     }
 
     /**
-     * Schedule the next block-hit interval from the chance %.
-     * 100% -> every 1 click, 50% -> every 2 clicks, 10% -> every 10 clicks.
-     * A small random jitter of ±1 is added so the pattern looks human.
+     * Simple random roll against the chance property.
+     * chance=100 always true, chance=1 almost never true.
      */
-    private void scheduleNextBlockHit() {
-        int interval = Math.max(1, (int) Math.round(100.0 / blockHitChance.getValue()));
-        int jitter = interval > 1 ? random.nextInt(3) - 1 : 0; // -1, 0 or +1
-        clicksUntilBlockHit = Math.max(1, interval + jitter);
+    private boolean rollChance() {
+        return random.nextInt(100) < blockHitChance.getValue();
     }
 
     /**
-     * Actually fire the block-hit: press RMB once.
-     * Uses the exact same KeyBind approach as the original.
+     * Set how many clicks until we attempt the next block hit.
+     * Higher chance = fewer clicks needed between hits.
+     */
+    private void resetClickCounter() {
+        // interval: chance 100 -> 1 click, chance 50 -> 2 clicks, chance 1 -> 100 clicks
+        int interval = Math.max(1, (int) Math.round(100.0 / blockHitChance.getValue()));
+        // small random jitter so it looks human
+        int jitter = interval > 1 ? random.nextInt(interval) : 0;
+        clicksNeeded = interval + jitter;
+        clickCounter = 0;
+    }
+
+    /**
+     * Fire the block hit using exact same bypass as original.
      */
     private void fireBlockHit() {
         if (mc.thePlayer.isUsingItem()) return;
@@ -128,7 +138,7 @@ public class AutoClicker extends Module {
         blockHitDelay += getBlockHitDelay();
         KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), false);
         KeyBindUtil.pressKeyOnce(mc.gameSettings.keyBindUseItem.getKeyCode());
-        scheduleNextBlockHit();
+        resetClickCounter();
     }
 
     // ── Events ────────────────────────────────────────────────────────────────
@@ -137,7 +147,7 @@ public class AutoClicker extends Module {
     public void onTick(TickEvent event) {
         if (event.getType() != EventType.PRE) return;
 
-        // Always drain delays
+        // Always drain delays every tick
         if (clickDelay > 0L) clickDelay -= 50L;
         if (blockHitDelay > 0L) blockHitDelay -= 50L;
 
@@ -161,24 +171,31 @@ public class AutoClicker extends Module {
         if (!mc.gameSettings.keyBindAttack.isKeyDown()) return;
         if (mc.thePlayer.isUsingItem()) return;
 
-        // ── Left-click ────────────────────────────────────────────────────────
+        // ── Left click ────────────────────────────────────────────────────────
         while (clickDelay <= 0L) {
             clickPending = true;
             clickDelay += getNextClickDelay();
             KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindAttack.getKeyCode(), false);
             KeyBindUtil.pressKeyOnce(mc.gameSettings.keyBindAttack.getKeyCode());
 
-            // ── Block-hit chance gate ─────────────────────────────────────────
+            // ── Block hit logic ───────────────────────────────────────────────
             if (blockHit.getValue()
                     && ItemUtil.isHoldingSword()
                     && hasValidTarget()
                     && blockHitDelay <= 0L) {
 
-                clicksUntilBlockHit--;
+                clickCounter++;
 
-                if (clicksUntilBlockHit <= 0) {
-                    fireBlockHit();
-                    // Break out so we don't fire multiple block-hits in one tick
+                // Only try when we have reached the needed click count
+                if (clickCounter >= clicksNeeded) {
+                    // Roll the actual chance - so even at the interval
+                    // there is still a random gate so it never feels robotic
+                    if (rollChance()) {
+                        fireBlockHit();
+                    } else {
+                        // Failed the roll, wait another interval
+                        resetClickCounter();
+                    }
                     break;
                 }
             }
@@ -196,12 +213,13 @@ public class AutoClicker extends Module {
     public void onEnabled() {
         clickDelay = 0L;
         blockHitDelay = 0L;
-        scheduleNextBlockHit();
+        resetClickCounter();
     }
 
     @Override
     public void onDisabled() {
-        clicksUntilBlockHit = 0;
+        clickCounter = 0;
+        clicksNeeded = 0;
     }
 
     @Override

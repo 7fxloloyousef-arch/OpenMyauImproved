@@ -17,13 +17,12 @@ public class AutoTool extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
     private int currentToolSlot = -1;
     private int previousSlot = -1;
+    // counts up each tick we are mining, switch happens at switchDelay ticks
     private int tickDelayCounter = 0;
 
     public final IntProperty switchDelay = new IntProperty("delay", 0, 0, 5);
     public final BooleanProperty switchBack = new BooleanProperty("switch-back", true);
     public final BooleanProperty sneakOnly = new BooleanProperty("sneak-only", true);
-    public final BooleanProperty instantSwitch = new BooleanProperty("instant-switch", true);
-    public final BooleanProperty instantSwitchBack = new BooleanProperty("instant-switch-back", true);
 
     public AutoTool() {
         super("AutoTool", false);
@@ -35,48 +34,18 @@ public class AutoTool extends Module {
         return TeamUtil.isEntityLoaded(killAura.getTarget()) && killAura.isAttackAllowed();
     }
 
-    /**
-     * Switch to the best tool for the block being looked at.
-     * Returns true if a switch happened.
-     */
-    private boolean switchToTool() {
-        int slot = ItemUtil.findInventorySlot(
-                mc.thePlayer.inventory.currentItem,
-                mc.theWorld.getBlockState(mc.objectMouseOver.getBlockPos()).getBlock()
-        );
-
-        if (mc.thePlayer.inventory.currentItem != slot) {
-            if (this.previousSlot == -1) {
-                this.previousSlot = mc.thePlayer.inventory.currentItem;
-            }
-            mc.thePlayer.inventory.currentItem = this.currentToolSlot = slot;
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Switch back to the previous slot immediately.
-     */
-    private void switchBack() {
-        if (this.previousSlot != -1) {
-            mc.thePlayer.inventory.currentItem = this.previousSlot;
-        }
-        resetState();
-    }
-
     private void resetState() {
-        this.currentToolSlot = -1;
-        this.previousSlot = -1;
-        this.tickDelayCounter = 0;
+        currentToolSlot = -1;
+        previousSlot = -1;
+        tickDelayCounter = 0;
     }
 
     @EventTarget
     public void onTick(TickEvent event) {
-        if (!this.isEnabled() || event.getType() != EventType.PRE) return;
+        if (!isEnabled() || event.getType() != EventType.PRE) return;
 
-        // If player manually changed slot, cancel the auto tool
-        if (this.currentToolSlot != -1 && this.currentToolSlot != mc.thePlayer.inventory.currentItem) {
+        // Player manually scrolled away from the tool we picked - cancel
+        if (currentToolSlot != -1 && currentToolSlot != mc.thePlayer.inventory.currentItem) {
             resetState();
             return;
         }
@@ -86,42 +55,41 @@ public class AutoTool extends Module {
         boolean attacking = mc.gameSettings.keyBindAttack.isKeyDown()
                 && !mc.thePlayer.isUsingItem()
                 && !isKillAura();
-        boolean sneakOk = !(Boolean) this.sneakOnly.getValue()
+        boolean sneakOk = !(Boolean) sneakOnly.getValue()
                 || KeyBindUtil.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode());
 
         if (lookingAtBlock && attacking && sneakOk) {
-            // Instant switch - bypass the delay entirely on first hit
-            if (instantSwitch.getValue()) {
-                switchToTool();
-            } else {
-                // Normal delay-based switch
-                if (this.tickDelayCounter >= this.switchDelay.getValue()) {
-                    switchToTool();
+            // Increment every tick we are actively mining
+            tickDelayCounter++;
+
+            // Only switch once the delay has been met
+            // delay=0 means switch on tick 1 (instant), delay=1 means tick 2, etc.
+            if (tickDelayCounter > switchDelay.getValue()) {
+                int best = ItemUtil.findInventorySlot(
+                        mc.thePlayer.inventory.currentItem,
+                        mc.theWorld.getBlockState(mc.objectMouseOver.getBlockPos()).getBlock()
+                );
+
+                if (mc.thePlayer.inventory.currentItem != best) {
+                    if (previousSlot == -1) {
+                        previousSlot = mc.thePlayer.inventory.currentItem;
+                    }
+                    mc.thePlayer.inventory.currentItem = currentToolSlot = best;
                 }
-                this.tickDelayCounter++;
             }
         } else {
-            // Not attacking or not looking at block anymore
-            if (this.switchBack.getValue() && this.previousSlot != -1) {
-                if (instantSwitchBack.getValue()) {
-                    // Switch back immediately same tick
-                    switchBack();
-                } else {
-                    // Original behaviour - switch back next tick
-                    mc.thePlayer.inventory.currentItem = this.previousSlot;
-                    resetState();
-                }
-            } else {
-                resetState();
+            // Stopped mining - switch back immediately
+            if (switchBack.getValue() && previousSlot != -1) {
+                mc.thePlayer.inventory.currentItem = previousSlot;
             }
+            resetState();
         }
     }
 
     @Override
     public void onDisabled() {
-        // Switch back to previous slot before disabling
-        if (this.switchBack.getValue() && this.previousSlot != -1) {
-            mc.thePlayer.inventory.currentItem = this.previousSlot;
+        if (switchBack.getValue() && previousSlot != -1) {
+            mc.thePlayer.inventory.currentItem = previousSlot;
         }
         resetState();
     }

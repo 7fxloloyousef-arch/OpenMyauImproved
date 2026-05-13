@@ -9,7 +9,6 @@ import myau.util.BlockUtil;
 import myau.util.RotationUtil;
 import myau.property.properties.BooleanProperty;
 import myau.property.properties.FloatProperty;
-import myau.property.properties.StringListProperty;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockObsidian;
 import net.minecraft.client.Minecraft;
@@ -40,13 +39,8 @@ public class FastPlace extends Module {
     public final BooleanProperty skipEndStone = new BooleanProperty("skip-endstone", true);
     public final BooleanProperty skipPlanks = new BooleanProperty("skip-planks", true);
     public final BooleanProperty skipInteractable = new BooleanProperty("skip-interactable", true);
-    public final BooleanProperty skipCustom = new BooleanProperty("skip-custom", false);
 
-    /**
-     * A set of blocks that will be skipped when skipCustom is enabled.
-     * You can add or remove blocks from this set dynamically.
-     */
-    private final Set<Block> customSkippedBlocks = new HashSet<>(Arrays.asList(
+    private final Set<Block> extraSkippedBlocks = new HashSet<>(Arrays.asList(
             Blocks.bedrock,
             Blocks.anvil,
             Blocks.enchanting_table,
@@ -61,68 +55,38 @@ public class FastPlace extends Module {
             Blocks.beacon
     ));
 
-    /**
-     * Add a block to the custom skip list at runtime.
-     *
-     * @param block The block to add
-     */
-    public void addCustomSkip(Block block) {
+    public void addSkippedBlock(Block block) {
         if (block != null) {
-            customSkippedBlocks.add(block);
+            extraSkippedBlocks.add(block);
         }
     }
 
-    /**
-     * Remove a block from the custom skip list at runtime.
-     *
-     * @param block The block to remove
-     */
-    public void removeCustomSkip(Block block) {
-        customSkippedBlocks.remove(block);
+    public void removeSkippedBlock(Block block) {
+        extraSkippedBlocks.remove(block);
     }
 
-    /**
-     * Check whether a block should be skipped based on the current settings.
-     *
-     * @param block The block to check
-     * @return true if the block should be skipped, false otherwise
-     */
     private boolean isSkippedBlock(Block block) {
         if (block == null) return false;
 
-        // Skip obsidian
         if (skipObsidian.getValue() && block instanceof BlockObsidian) {
             return true;
         }
-
-        // Skip end stone
         if (skipEndStone.getValue() && block == Blocks.end_stone) {
             return true;
         }
-
-        // Skip all plank variants (oak, spruce, birch, jungle, acacia, dark oak)
         if (skipPlanks.getValue() && block == Blocks.planks) {
             return true;
         }
-
-        // Skip interactable blocks (chests, furnaces, etc.)
         if (skipInteractable.getValue() && BlockUtil.isInteractable(block)) {
             return true;
         }
-
-        // Skip custom user-defined blocks
-        if (skipCustom.getValue() && customSkippedBlocks.contains(block)) {
+        if (extraSkippedBlocks.contains(block)) {
             return true;
         }
 
         return false;
     }
 
-    /**
-     * Determine if placing is allowed based on the held item and current settings.
-     *
-     * @return true if placing is allowed, false otherwise
-     */
     private boolean canPlace() {
         ItemStack stack = mc.thePlayer.getHeldItem();
 
@@ -132,7 +96,6 @@ public class FastPlace extends Module {
 
         Item item = stack.getItem();
 
-        // Never fast-place with a fishing rod
         if (item instanceof ItemFishingRod) {
             return false;
         }
@@ -140,17 +103,14 @@ public class FastPlace extends Module {
         if (item instanceof ItemBlock) {
             Block block = ((ItemBlock) item).getBlock();
 
-            // Check all skip conditions
             if (isSkippedBlock(block)) {
                 return false;
             }
 
-            // If place-fix is disabled, allow placing
             if (!(Boolean) this.placeFix.getValue()) {
                 return true;
             }
 
-            // Raytrace to make sure we are actually looking at a valid block face
             MovingObjectPosition mop = RotationUtil.rayTrace(
                     mc.thePlayer.rotationYaw,
                     mc.thePlayer.rotationPitch,
@@ -169,7 +129,6 @@ public class FastPlace extends Module {
             );
         }
 
-        // If blocks-only is off, allow fast-placing with non-block items
         return !(Boolean) this.blocksOnly.getValue();
     }
 
@@ -183,17 +142,14 @@ public class FastPlace extends Module {
 
         int rightClickDelayTimer = ((IAccessorMinecraft) mc).getRightClickDelayTimer();
 
-        // Accumulate delay when the timer resets to 4
         if (rightClickDelayTimer == 4) {
             this.delayMS += (long) (50.0F * this.delay.getValue());
         }
 
-        // Drain the delay buffer each tick
         if (this.delayMS > 0L) {
             this.delayMS -= 50L;
         }
 
-        // Reset the right-click timer if the delay has been satisfied
         if (this.delayMS <= 0L && rightClickDelayTimer > 1 && this.canPlace()) {
             ((IAccessorMinecraft) mc).setRightClickDelayTimer(0);
         }

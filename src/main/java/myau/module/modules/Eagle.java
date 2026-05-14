@@ -11,7 +11,6 @@ import myau.util.PlayerUtil;
 import myau.property.properties.BooleanProperty;
 import myau.property.properties.IntProperty;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.inventory.GuiInventory;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import org.apache.commons.lang3.RandomUtils;
@@ -23,10 +22,8 @@ public class Eagle extends Module {
 
     private static final Minecraft mc = Minecraft.getMinecraft();
 
-    private int sneakDelay = 0;
-    private boolean pendingInventoryClose = false;
+    private int sneakTicks = 0;
     private boolean wasEdge = false;
-    private long lastEdgeTime = 0L;
 
     public final IntProperty minDelay = new IntProperty("min-delay", 2, 0, 10);
     public final IntProperty maxDelay = new IntProperty("max-delay", 3, 0, 10);
@@ -58,36 +55,29 @@ public class Eagle extends Module {
         );
     }
 
-    private boolean shouldSneak() {
+    private boolean passesChecks() {
         if (!mc.thePlayer.onGround) {
             return false;
         }
-
+        if (mc.currentScreen != null) {
+            return false;
+        }
         if (directionCheck.getValue() && mc.gameSettings.keyBindForward.isKeyDown()) {
             return false;
         }
-
         if (jumpCheck.getValue() && mc.gameSettings.keyBindJump.isKeyDown()) {
             return false;
         }
-
         if (pitchCheck.getValue() && mc.thePlayer.rotationPitch < 69.0F) {
             return false;
         }
-
         if (sneakOnly.getValue() && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
             return false;
         }
-
         if (blocksOnly.getValue() && !hotbarHasBlocks()) {
             return false;
         }
-
         return true;
-    }
-
-    private boolean shouldActivate() {
-        return shouldSneak() && (sneakDelay > 0 || isOnEdge());
     }
 
     private int nextDelay() {
@@ -101,43 +91,24 @@ public class Eagle extends Module {
         if (!isEnabled() || event.getType() != EventType.PRE) {
             return;
         }
-
         if (mc.thePlayer == null || mc.theWorld == null) {
             return;
         }
 
-        // close the inventory we opened last tick (sends the sneak packet then closes)
-        if (pendingInventoryClose) {
-            mc.thePlayer.closeScreen();
-            pendingInventoryClose = false;
-        }
-
         boolean onEdge = isOnEdge();
 
-        // manage the delay timer
-        if (sneakDelay > 0) {
-            sneakDelay--;
-        }
-
         if (onEdge && !wasEdge) {
-            // just arrived at an edge — start a fresh delay
-            sneakDelay = nextDelay();
-            lastEdgeTime = System.currentTimeMillis();
-        } else if (!onEdge && wasEdge) {
-            // moved away from edge — reset
-            sneakDelay = 0;
-        } else if (onEdge && sneakDelay == 0) {
-            // still on edge and delay expired — renew
-            sneakDelay = nextDelay();
+            // just reached the edge — start sneak timer
+            sneakTicks = nextDelay();
+        } else if (!onEdge) {
+            // safe ground — reset
+            sneakTicks = 0;
+        } else if (onEdge && sneakTicks > 0) {
+            // counting down
+            sneakTicks--;
         }
 
         wasEdge = onEdge;
-
-        // open inventory briefly so the server receives the sneak state change
-        if (shouldActivate()) {
-            mc.displayGuiScreen(new GuiInventory(mc.thePlayer));
-            pendingInventoryClose = true;
-        }
     }
 
     @EventTarget(Priority.LOWEST)
@@ -146,50 +117,32 @@ public class Eagle extends Module {
             return;
         }
 
-        if (mc.currentScreen != null) {
+        if (!passesChecks()) {
             return;
         }
 
-        // when sneaking-only is on and the player is holding sneak, undo the vanilla
-        // sneak slowdown first so we can reapply it ourselves with proper timing
+        boolean shouldSneak = isOnEdge() && sneakTicks == 0;
+
+        // when sneaking-only mode is on, the player is already holding sneak,
+        // so vanilla already applied the 0.3 slowdown — undo it first
         if (sneakOnly.getValue()
-                && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())
-                && shouldSneak()) {
+                && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
             mc.thePlayer.movementInput.sneak = false;
             mc.thePlayer.movementInput.moveForward /= 0.3F;
             mc.thePlayer.movementInput.moveStrafe /= 0.3F;
         }
 
-        if (shouldActivate()) {
-            if (!mc.thePlayer.movementInput.sneak) {
-                mc.thePlayer.movementInput.sneak = true;
-                mc.thePlayer.movementInput.moveForward *= 0.3F;
-                mc.thePlayer.movementInput.moveStrafe *= 0.3F;
-            }
-        } else {
-            // make sure sneak is released when conditions aren't met
-            if (blocksOnly.getValue() && !hotbarHasBlocks()) {
-                mc.thePlayer.movementInput.sneak = false;
-            }
+        if (shouldSneak) {
+            mc.thePlayer.movementInput.sneak = true;
+            mc.thePlayer.movementInput.moveForward *= 0.3F;
+            mc.thePlayer.movementInput.moveStrafe *= 0.3F;
         }
     }
 
     @Override
     public void onDisabled() {
-        sneakDelay = 0;
+        sneakTicks = 0;
         wasEdge = false;
-        lastEdgeTime = 0L;
-
-        if (pendingInventoryClose) {
-            if (mc.thePlayer != null) {
-                mc.thePlayer.closeScreen();
-            }
-            pendingInventoryClose = false;
-        }
-
-        if (mc.currentScreen instanceof GuiInventory && mc.thePlayer != null) {
-            mc.thePlayer.closeScreen();
-        }
     }
 
     @Override

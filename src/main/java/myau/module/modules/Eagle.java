@@ -22,6 +22,11 @@ public class Eagle extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
     private int sneakDelay = 0;
 
+    // Out-of-blocks sneak timer
+    private long outOfBlocksSneakStart = 0L;
+    private boolean lookedBack = false;
+    private static final long SNEAK_DURATION_MS = 700L; // 0.7 seconds
+
     public final IntProperty minDelay = new IntProperty("min-delay", 2, 0, 10);
     public final IntProperty maxDelay = new IntProperty("max-delay", 3, 0, 10);
     public final BooleanProperty directionCheck = new BooleanProperty("direction-check", true);
@@ -57,7 +62,6 @@ public class Eagle extends Module {
         } else if (sneakOnly.getValue() && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
             return false;
         } else {
-            // blocksOnly check removed here so we still sneak when out of blocks
             return mc.thePlayer.onGround;
         }
     }
@@ -93,17 +97,39 @@ public class Eagle extends Module {
                 mc.thePlayer.movementInput.moveStrafe /= 0.3F;
             }
 
-            // Out of blocks -> force sneak on edge so we don't fall (no bypass timing needed)
             if (outOfBlocks) {
                 if (mc.thePlayer.onGround && !canMoveSafely()) {
-                    mc.thePlayer.movementInput.sneak = true;
-                    mc.thePlayer.movementInput.moveStrafe *= 0.3F;
-                    mc.thePlayer.movementInput.moveForward *= 0.3F;
+                    // start timer when we first hit the edge
+                    if (outOfBlocksSneakStart == 0L) {
+                        outOfBlocksSneakStart = System.currentTimeMillis();
+                        lookedBack = false;
+                    }
+
+                    long elapsed = System.currentTimeMillis() - outOfBlocksSneakStart;
+
+                    if (elapsed < SNEAK_DURATION_MS) {
+                        // sneak for 0.7s
+                        mc.thePlayer.movementInput.sneak = true;
+                        mc.thePlayer.movementInput.moveStrafe *= 0.3F;
+                        mc.thePlayer.movementInput.moveForward *= 0.3F;
+                    } else if (!lookedBack) {
+                        // after 0.7s, turn camera around
+                        mc.thePlayer.rotationYaw += 180.0F;
+                        mc.thePlayer.rotationYawHead = mc.thePlayer.rotationYaw;
+                        lookedBack = true;
+                    }
+                } else {
+                    // no longer at edge -> reset
+                    outOfBlocksSneakStart = 0L;
+                    lookedBack = false;
                 }
-                return; // skip normal eagle logic when no blocks
+                return; // skip normal eagle when out of blocks
+            } else {
+                // got blocks again -> reset
+                outOfBlocksSneakStart = 0L;
+                lookedBack = false;
             }
 
-            // Normal eagle behavior (unchanged)
             if (!mc.thePlayer.movementInput.sneak) {
                 if (this.shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
                     mc.thePlayer.movementInput.sneak = true;
@@ -117,6 +143,8 @@ public class Eagle extends Module {
     @Override
     public void onDisabled() {
         this.sneakDelay = 0;
+        this.outOfBlocksSneakStart = 0L;
+        this.lookedBack = false;
     }
 
     @Override

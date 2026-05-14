@@ -57,9 +57,7 @@ public class Eagle extends Module {
         } else if (sneakOnly.getValue() && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
             return false;
         } else {
-            if (this.blocksOnly.getValue()) {
-                if (!hotbarHasBlocks()) return false;
-            }
+            // blocksOnly check removed here so we still sneak when out of blocks
             return mc.thePlayer.onGround;
         }
     }
@@ -87,23 +85,31 @@ public class Eagle extends Module {
     public void onMoveInput(MoveInputEvent event) {
         if (this.isEnabled() && mc.currentScreen == null) {
 
+            boolean outOfBlocks = this.blocksOnly.getValue() && !hotbarHasBlocks();
+
             if (sneakOnly.getValue() && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode()) && shouldSneak()) {
                 mc.thePlayer.movementInput.sneak = false;
                 mc.thePlayer.movementInput.moveForward /= 0.3F;
                 mc.thePlayer.movementInput.moveStrafe /= 0.3F;
             }
 
+            // Out of blocks -> force sneak on edge so we don't fall (no bypass timing needed)
+            if (outOfBlocks) {
+                if (mc.thePlayer.onGround && !canMoveSafely()) {
+                    mc.thePlayer.movementInput.sneak = true;
+                    mc.thePlayer.movementInput.moveStrafe *= 0.3F;
+                    mc.thePlayer.movementInput.moveForward *= 0.3F;
+                }
+                return; // skip normal eagle logic when no blocks
+            }
+
+            // Normal eagle behavior (unchanged)
             if (!mc.thePlayer.movementInput.sneak) {
                 if (this.shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
                     mc.thePlayer.movementInput.sneak = true;
                     mc.thePlayer.movementInput.moveStrafe *= 0.3F;
                     mc.thePlayer.movementInput.moveForward *= 0.3F;
                 }
-            }
-
-            // No blocks left in hotbar - stop sneaking immediately
-            if (this.blocksOnly.getValue() && !hotbarHasBlocks()) {
-                mc.thePlayer.movementInput.sneak = false;
             }
         }
     }

@@ -11,7 +11,7 @@ import myau.util.PlayerUtil;
 import myau.property.properties.BooleanProperty;
 import myau.property.properties.IntProperty;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiInventory;
+import net.minecraft.client.gui.inventory.GuiInventory;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import org.apache.commons.lang3.RandomUtils;

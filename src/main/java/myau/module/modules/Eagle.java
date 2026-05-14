@@ -30,27 +30,30 @@ public class Eagle extends Module {
     public final BooleanProperty blocksOnly = new BooleanProperty("blocks-only", true);
     public final BooleanProperty sneakOnly = new BooleanProperty("sneaking-only", false);
 
-    /**
-     * Count every block item stack across the entire hotbar (slots 0-8).
-     * Returns the total number of block items found.
-     */
-    private int countHotbarBlocks() {
-        int count = 0;
-        for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.thePlayer.inventory.getStackInSlot(i);
-            if (stack != null && stack.getItem() instanceof ItemBlock && stack.stackSize > 0) {
-                count++;
-            }
-        }
-        return count;
+    public Eagle() {
+        super("Eagle", false);
     }
 
+    // ── Hotbar scan ───────────────────────────────────────────────────────────
+
     /**
-     * Returns true if the player has at least 1 block anywhere in their hotbar.
+     * Scan all 9 hotbar slots and return true the moment we find
+     * at least one ItemBlock with stackSize > 0.
+     * Returns instantly on the first match so it is as fast as possible.
      */
     private boolean hotbarHasBlocks() {
-        return countHotbarBlocks() > 0;
+        for (int i = 0; i < 9; i++) {
+            ItemStack stack = mc.thePlayer.inventory.getStackInSlot(i);
+            if (stack != null
+                    && stack.getItem() instanceof ItemBlock
+                    && stack.stackSize > 0) {
+                return true;
+            }
+        }
+        return false;
     }
+
+    // ── Movement safety ───────────────────────────────────────────────────────
 
     private boolean canMoveSafely() {
         double[] offset = MoveUtil.predictMovement();
@@ -60,37 +63,39 @@ public class Eagle extends Module {
         );
     }
 
+    // ── Core condition ────────────────────────────────────────────────────────
+
     /**
-     * Core check - should we be sneaking right now?
-     * All conditions must pass. If blocksOnly is on, hotbar is scanned
-     * every call so the moment blocks hit 0 this returns false immediately.
+     * Every single condition that must be true for eagle to activate.
+     * Called fresh every event so there is zero stale state.
      */
     private boolean shouldSneak() {
-        // Must be on ground
+        // Only sneak on ground
         if (!mc.thePlayer.onGround) return false;
 
-        // Direction check
-        if (directionCheck.getValue() && mc.gameSettings.keyBindForward.isKeyDown()) return false;
+        // Hotbar block check - instant reaction, no grace period
+        if (blocksOnly.getValue() && !hotbarHasBlocks()) return false;
 
-        // Jump check
-        if (jumpCheck.getValue() && mc.gameSettings.keyBindJump.isKeyDown()) return false;
+        // Don't sneak while walking forward
+        if (directionCheck.getValue()
+                && mc.thePlayer.movementInput.moveForward > 0.0F) return false;
 
-        // Pitch check
-        if (pitchCheck.getValue() && mc.thePlayer.rotationPitch < 69.0F) return false;
+        // Don't sneak while jumping
+        if (jumpCheck.getValue()
+                && mc.gameSettings.keyBindJump.isKeyDown()) return false;
 
-        // Sneak-only check
+        // Don't sneak if not looking down enough
+        if (pitchCheck.getValue()
+                && mc.thePlayer.rotationPitch < 69.0F) return false;
+
+        // sneakOnly: only eagle while the player is also holding sneak
         if (sneakOnly.getValue()
                 && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) return false;
-
-        // Hotbar block check - scans every call so it reacts instantly
-        if (blocksOnly.getValue() && !hotbarHasBlocks()) return false;
 
         return true;
     }
 
-    public Eagle() {
-        super("Eagle", false);
-    }
+    // ── Events ────────────────────────────────────────────────────────────────
 
     @EventTarget(Priority.LOWEST)
     public void onTick(TickEvent event) {
@@ -100,6 +105,7 @@ public class Eagle extends Module {
             sneakDelay--;
         }
 
+        // Refresh the sneak delay window each time it expires
         if (sneakDelay == 0 && canMoveSafely()) {
             sneakDelay = RandomUtils.nextInt(
                     minDelay.getValue(),
@@ -114,34 +120,29 @@ public class Eagle extends Module {
 
         boolean should = shouldSneak();
 
-        // sneakOnly mode - undo the vanilla sneak movement speed penalty
-        // while our sneak is active so the player moves at normal speed
-        if (sneakOnly.getValue()
-                && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())
-                && should) {
-            mc.thePlayer.movementInput.sneak = false;
-            mc.thePlayer.movementInput.moveForward /= 0.3F;
-            mc.thePlayer.movementInput.moveStrafe /= 0.3F;
-        }
-
-        if (!mc.thePlayer.movementInput.sneak && should
-                && (sneakDelay > 0 || canMoveSafely())) {
+        if (should && (sneakDelay > 0 || canMoveSafely())) {
+            // Eagle is active - force sneak on
+            // Also undo the vanilla sneak speed penalty so movement feels normal
             mc.thePlayer.movementInput.sneak = true;
-            mc.thePlayer.movementInput.moveStrafe *= 0.3F;
             mc.thePlayer.movementInput.moveForward *= 0.3F;
-        }
-
-        // Key moment - if shouldSneak() is false (no blocks, wrong pitch, etc.)
-        // force sneak off immediately so the player stops eagle instantly
-        if (!should) {
-            mc.thePlayer.movementInput.sneak = false;
+            mc.thePlayer.movementInput.moveStrafe *= 0.3F;
+        } else if (!should) {
+            // Condition gone (no blocks, wrong pitch, moved forward, etc.)
+            // Only release sneak if WE set it - don't touch it if the
+            // player is holding sneak themselves in non-sneakOnly mode
+            if (!Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
+                mc.thePlayer.movementInput.sneak = false;
+            }
         }
     }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     @Override
     public void onDisabled() {
         sneakDelay = 0;
-        if (mc.thePlayer != null) {
+        if (mc.thePlayer != null
+                && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
             mc.thePlayer.movementInput.sneak = false;
         }
     }

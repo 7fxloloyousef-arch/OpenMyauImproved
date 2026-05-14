@@ -11,6 +11,7 @@ import myau.util.PlayerUtil;
 import myau.property.properties.BooleanProperty;
 import myau.property.properties.IntProperty;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiInventory;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import org.apache.commons.lang3.RandomUtils;
@@ -21,6 +22,8 @@ import java.util.Objects;
 public class Eagle extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
     private int sneakDelay = 0;
+    // true = we opened the inventory this tick, close it next tick
+    private boolean inventoryOpen = false;
 
     public final IntProperty minDelay = new IntProperty("min-delay", 2, 0, 10);
     public final IntProperty maxDelay = new IntProperty("max-delay", 3, 0, 10);
@@ -30,16 +33,9 @@ public class Eagle extends Module {
     public final BooleanProperty blocksOnly = new BooleanProperty("blocks-only", true);
     public final BooleanProperty sneakOnly = new BooleanProperty("sneaking-only", false);
 
-    public Eagle() {
-        super("Eagle", false);
-    }
-
-    // ── Hotbar scan ───────────────────────────────────────────────────────────
-
     /**
-     * Scan all 9 hotbar slots and return true the moment we find
-     * at least one ItemBlock with stackSize > 0.
-     * Returns instantly on the first match so it is as fast as possible.
+     * Returns true if ANY of the 9 hotbar slots contains a block item.
+     * Only returns false when every single hotbar slot has no blocks left.
      */
     private boolean hotbarHasBlocks() {
         for (int i = 0; i < 9; i++) {
@@ -53,97 +49,95 @@ public class Eagle extends Module {
         return false;
     }
 
-    // ── Movement safety ───────────────────────────────────────────────────────
-
     private boolean canMoveSafely() {
         double[] offset = MoveUtil.predictMovement();
-        return PlayerUtil.canMove(
-                mc.thePlayer.motionX + offset[0],
-                mc.thePlayer.motionZ + offset[1]
-        );
+        return PlayerUtil.canMove(mc.thePlayer.motionX + offset[0], mc.thePlayer.motionZ + offset[1]);
     }
 
-    // ── Core condition ────────────────────────────────────────────────────────
-
-    /**
-     * Every single condition that must be true for eagle to activate.
-     * Called fresh every event so there is zero stale state.
-     */
     private boolean shouldSneak() {
-        // Only sneak on ground
-        if (!mc.thePlayer.onGround) return false;
-
-        // Hotbar block check - instant reaction, no grace period
-        if (blocksOnly.getValue() && !hotbarHasBlocks()) return false;
-
-        // Don't sneak while walking forward
-        if (directionCheck.getValue()
-                && mc.thePlayer.movementInput.moveForward > 0.0F) return false;
-
-        // Don't sneak while jumping
-        if (jumpCheck.getValue()
-                && mc.gameSettings.keyBindJump.isKeyDown()) return false;
-
-        // Don't sneak if not looking down enough
-        if (pitchCheck.getValue()
-                && mc.thePlayer.rotationPitch < 69.0F) return false;
-
-        // sneakOnly: only eagle while the player is also holding sneak
-        if (sneakOnly.getValue()
-                && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) return false;
-
-        return true;
+        if (this.directionCheck.getValue() && mc.gameSettings.keyBindForward.isKeyDown()) {
+            return false;
+        } else if (this.jumpCheck.getValue() && mc.gameSettings.keyBindJump.isKeyDown()) {
+            return false;
+        } else if (this.pitchCheck.getValue() && mc.thePlayer.rotationPitch < 69.0F) {
+            return false;
+        } else if (sneakOnly.getValue() && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
+            return false;
+        } else {
+            if (this.blocksOnly.getValue()) {
+                if (!hotbarHasBlocks()) return false;
+            }
+            return mc.thePlayer.onGround;
+        }
     }
 
-    // ── Events ────────────────────────────────────────────────────────────────
+    public Eagle() {
+        super("Eagle", false);
+    }
 
     @EventTarget(Priority.LOWEST)
     public void onTick(TickEvent event) {
-        if (!isEnabled() || event.getType() != EventType.PRE) return;
+        if (this.isEnabled() && event.getType() == EventType.PRE) {
 
-        if (sneakDelay > 0) {
-            sneakDelay--;
-        }
+            // Close the inventory we opened last tick
+            // This sends the sneak packet then immediately closes
+            if (inventoryOpen) {
+                mc.thePlayer.closeScreen();
+                inventoryOpen = false;
+            }
 
-        // Refresh the sneak delay window each time it expires
-        if (sneakDelay == 0 && canMoveSafely()) {
-            sneakDelay = RandomUtils.nextInt(
-                    minDelay.getValue(),
-                    maxDelay.getValue() + 1
-            );
+            if (this.sneakDelay > 0) {
+                this.sneakDelay--;
+            }
+
+            if (this.sneakDelay == 0 && this.canMoveSafely()) {
+                this.sneakDelay = RandomUtils.nextInt(
+                        this.minDelay.getValue(),
+                        this.maxDelay.getValue() + 1
+                );
+            }
+
+            // Open inventory briefly to send sneak packet to server
+            // only when eagle should be active
+            if (shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
+                mc.displayGuiScreen(new GuiInventory(mc.thePlayer));
+                inventoryOpen = true;
+            }
         }
     }
 
     @EventTarget(Priority.LOWEST)
     public void onMoveInput(MoveInputEvent event) {
-        if (!isEnabled() || mc.currentScreen != null) return;
+        if (this.isEnabled() && mc.currentScreen == null) {
 
-        boolean should = shouldSneak();
+            if (sneakOnly.getValue() && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode()) && shouldSneak()) {
+                mc.thePlayer.movementInput.sneak = false;
+                mc.thePlayer.movementInput.moveForward /= 0.3F;
+                mc.thePlayer.movementInput.moveStrafe /= 0.3F;
+            }
 
-        if (should && (sneakDelay > 0 || canMoveSafely())) {
-            // Eagle is active - force sneak on
-            // Also undo the vanilla sneak speed penalty so movement feels normal
-            mc.thePlayer.movementInput.sneak = true;
-            mc.thePlayer.movementInput.moveForward *= 0.3F;
-            mc.thePlayer.movementInput.moveStrafe *= 0.3F;
-        } else if (!should) {
-            // Condition gone (no blocks, wrong pitch, moved forward, etc.)
-            // Only release sneak if WE set it - don't touch it if the
-            // player is holding sneak themselves in non-sneakOnly mode
-            if (!Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
+            if (!mc.thePlayer.movementInput.sneak) {
+                if (this.shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
+                    mc.thePlayer.movementInput.sneak = true;
+                    mc.thePlayer.movementInput.moveStrafe *= 0.3F;
+                    mc.thePlayer.movementInput.moveForward *= 0.3F;
+                }
+            }
+
+            // No blocks left anywhere in hotbar - force sneak off immediately
+            if (this.blocksOnly.getValue() && !hotbarHasBlocks()) {
                 mc.thePlayer.movementInput.sneak = false;
             }
         }
     }
 
-    // ── Lifecycle ─────────────────────────────────────────────────────────────
-
     @Override
     public void onDisabled() {
-        sneakDelay = 0;
-        if (mc.thePlayer != null
-                && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
-            mc.thePlayer.movementInput.sneak = false;
+        this.sneakDelay = 0;
+        this.inventoryOpen = false;
+        // Make sure inventory is closed when module turns off
+        if (mc.currentScreen instanceof GuiInventory) {
+            mc.thePlayer.closeScreen();
         }
     }
 
@@ -151,22 +145,21 @@ public class Eagle extends Module {
     public void verifyValue(String name) {
         switch (name) {
             case "min-delay":
-                if (minDelay.getValue() > maxDelay.getValue()) {
-                    maxDelay.setValue(minDelay.getValue());
+                if (this.minDelay.getValue() > this.maxDelay.getValue()) {
+                    this.maxDelay.setValue(this.minDelay.getValue());
                 }
                 break;
             case "max-delay":
-                if (minDelay.getValue() > maxDelay.getValue()) {
-                    minDelay.setValue(maxDelay.getValue());
+                if (this.minDelay.getValue() > this.maxDelay.getValue()) {
+                    this.minDelay.setValue(this.maxDelay.getValue());
                 }
-                break;
         }
     }
 
     @Override
     public String[] getSuffix() {
-        return Objects.equals(minDelay.getValue(), maxDelay.getValue())
-                ? new String[]{minDelay.getValue().toString()}
-                : new String[]{String.format("%d-%d", minDelay.getValue(), maxDelay.getValue())};
+        return Objects.equals(this.minDelay.getValue(), this.maxDelay.getValue())
+                ? new String[]{this.minDelay.getValue().toString()}
+                : new String[]{String.format("%d-%d", this.minDelay.getValue(), this.maxDelay.getValue())};
     }
 }

@@ -21,8 +21,6 @@ import java.util.Objects;
 public class Eagle extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
     private int sneakDelay = 0;
-    // counts down from 14 ticks (700ms / 50ms per tick = 14 ticks)
-    private int sneakHoldTicks = 0;
 
     public final IntProperty minDelay = new IntProperty("min-delay", 2, 0, 10);
     public final IntProperty maxDelay = new IntProperty("max-delay", 3, 0, 10);
@@ -82,10 +80,6 @@ public class Eagle extends Module {
                         this.maxDelay.getValue() + 1
                 );
             }
-            // count down the sneak hold
-            if (sneakHoldTicks > 0) {
-                sneakHoldTicks--;
-            }
         }
     }
 
@@ -99,22 +93,16 @@ public class Eagle extends Module {
                 mc.thePlayer.movementInput.moveStrafe /= 0.3F;
             }
 
-            if (this.shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
-                // Every time conditions are met, reset the 14 tick (700ms) hold counter
-                sneakHoldTicks = 14;
+            if (!mc.thePlayer.movementInput.sneak) {
+                if (this.shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
+                    mc.thePlayer.movementInput.sneak = true;
+                    mc.thePlayer.movementInput.moveStrafe *= 0.3F;
+                    mc.thePlayer.movementInput.moveForward *= 0.3F;
+                }
             }
 
-            // No blocks left - kill sneak immediately
+            // No blocks left in hotbar - stop sneaking immediately
             if (this.blocksOnly.getValue() && !hotbarHasBlocks()) {
-                sneakHoldTicks = 0;
-            }
-
-            // Actually apply sneak based on the tick counter
-            if (sneakHoldTicks > 0) {
-                mc.thePlayer.movementInput.sneak = true;
-                mc.thePlayer.movementInput.moveStrafe *= 0.3F;
-                mc.thePlayer.movementInput.moveForward *= 0.3F;
-            } else {
                 mc.thePlayer.movementInput.sneak = false;
             }
         }
@@ -123,7 +111,6 @@ public class Eagle extends Module {
     @Override
     public void onDisabled() {
         this.sneakDelay = 0;
-        this.sneakHoldTicks = 0;
     }
 
     @Override

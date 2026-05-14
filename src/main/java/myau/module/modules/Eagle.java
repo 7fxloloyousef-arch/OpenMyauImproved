@@ -22,10 +22,9 @@ public class Eagle extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
     private int sneakDelay = 0;
 
-    private boolean sequenceDone = false;   // true = fired once, wait for blocks
-    private boolean didLookBack = false;    // true = look back already done
-    private long sneakStartTime = 0L;      // when sneak started
-    private boolean sneakingForBlocks = false; // true = currently in sneak phase
+    private boolean sequenceDone = false;
+    private boolean sneakingForBlocks = false;
+    private long sneakStartTime = 0L;
     private static final long SNEAK_DURATION_MS = 700L;
 
     public final IntProperty minDelay = new IntProperty("min-delay", 2, 0, 10);
@@ -69,9 +68,8 @@ public class Eagle extends Module {
 
     private void resetSequence() {
         sequenceDone = false;
-        didLookBack = false;
-        sneakStartTime = 0L;
         sneakingForBlocks = false;
+        sneakStartTime = 0L;
     }
 
     public Eagle() {
@@ -99,27 +97,19 @@ public class Eagle extends Module {
 
         boolean noBlocks = this.blocksOnly.getValue() && !hotbarHasBlocks();
 
-        // Blocks came back - reset so next time blocks run out it fires again
+        // Blocks came back - reset so sequence can fire again next time
         if (!noBlocks) {
             resetSequence();
         }
 
-        if (sneakOnly.getValue()
-                && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())
-                && shouldSneak()) {
-            mc.thePlayer.movementInput.sneak = false;
-            mc.thePlayer.movementInput.moveForward /= 0.3F;
-            mc.thePlayer.movementInput.moveStrafe /= 0.3F;
-        }
-
         if (noBlocks) {
-            // Sequence already fully done - do absolutely nothing until blocks return
+            // Sequence fully done - do nothing until blocks return
             if (sequenceDone) {
                 mc.thePlayer.movementInput.sneak = false;
                 return;
             }
 
-            // Start sneak phase once
+            // Start sneak timer once
             if (!sneakingForBlocks) {
                 sneakingForBlocks = true;
                 sneakStartTime = System.currentTimeMillis();
@@ -128,28 +118,27 @@ public class Eagle extends Module {
             long elapsed = System.currentTimeMillis() - sneakStartTime;
 
             if (elapsed < SNEAK_DURATION_MS) {
-                // Still in 0.7s sneak window
+                // Sneak for 0.7s - use same bypass as original
                 mc.thePlayer.movementInput.sneak = true;
                 mc.thePlayer.movementInput.moveStrafe *= 0.3F;
                 mc.thePlayer.movementInput.moveForward *= 0.3F;
             } else {
-                // 0.7s done - release sneak
+                // 0.7s done - stop and lock
                 mc.thePlayer.movementInput.sneak = false;
-
-                // Look back exactly once
-                if (!didLookBack) {
-                    mc.thePlayer.rotationYaw += 180.0F;
-                    mc.thePlayer.rotationYawHead = mc.thePlayer.rotationYaw;
-                    didLookBack = true;
-                }
-
-                // Lock sequence - nothing more until blocks return
                 sequenceDone = true;
             }
             return;
         }
 
-        // Normal eagle with blocks
+        // Normal eagle when we have blocks - exact original logic
+        if (sneakOnly.getValue()
+                && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())
+                && shouldSneak()) {
+            mc.thePlayer.movementInput.sneak = false;
+            mc.thePlayer.movementInput.moveForward /= 0.3F;
+            mc.thePlayer.movementInput.moveStrafe /= 0.3F;
+        }
+
         if (!mc.thePlayer.movementInput.sneak) {
             if (this.shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
                 mc.thePlayer.movementInput.sneak = true;

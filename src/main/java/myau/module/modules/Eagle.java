@@ -22,10 +22,11 @@ public class Eagle extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
     private int sneakDelay = 0;
 
-    // Out-of-blocks sneak timer
-    private long outOfBlocksSneakStart = 0L;
-    private boolean lookedBack = false;
-    private static final long SNEAK_DURATION_MS = 700L; // 0.7 seconds
+    private boolean sequenceDone = false;   // true = fired once, wait for blocks
+    private boolean didLookBack = false;    // true = look back already done
+    private long sneakStartTime = 0L;      // when sneak started
+    private boolean sneakingForBlocks = false; // true = currently in sneak phase
+    private static final long SNEAK_DURATION_MS = 700L;
 
     public final IntProperty minDelay = new IntProperty("min-delay", 2, 0, 10);
     public final IntProperty maxDelay = new IntProperty("max-delay", 3, 0, 10);
@@ -66,6 +67,13 @@ public class Eagle extends Module {
         }
     }
 
+    private void resetSequence() {
+        sequenceDone = false;
+        didLookBack = false;
+        sneakStartTime = 0L;
+        sneakingForBlocks = false;
+    }
+
     public Eagle() {
         super("Eagle", false);
     }
@@ -87,55 +95,66 @@ public class Eagle extends Module {
 
     @EventTarget(Priority.LOWEST)
     public void onMoveInput(MoveInputEvent event) {
-        if (this.isEnabled() && mc.currentScreen == null) {
+        if (!this.isEnabled() || mc.currentScreen != null) return;
 
-            boolean outOfBlocks = this.blocksOnly.getValue() && !hotbarHasBlocks();
+        boolean noBlocks = this.blocksOnly.getValue() && !hotbarHasBlocks();
 
-            if (sneakOnly.getValue() && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode()) && shouldSneak()) {
+        // Blocks came back - reset so next time blocks run out it fires again
+        if (!noBlocks) {
+            resetSequence();
+        }
+
+        if (sneakOnly.getValue()
+                && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())
+                && shouldSneak()) {
+            mc.thePlayer.movementInput.sneak = false;
+            mc.thePlayer.movementInput.moveForward /= 0.3F;
+            mc.thePlayer.movementInput.moveStrafe /= 0.3F;
+        }
+
+        if (noBlocks) {
+            // Sequence already fully done - do absolutely nothing until blocks return
+            if (sequenceDone) {
                 mc.thePlayer.movementInput.sneak = false;
-                mc.thePlayer.movementInput.moveForward /= 0.3F;
-                mc.thePlayer.movementInput.moveStrafe /= 0.3F;
+                return;
             }
 
-            if (outOfBlocks) {
-                if (mc.thePlayer.onGround && !canMoveSafely()) {
-                    // start timer when we first hit the edge
-                    if (outOfBlocksSneakStart == 0L) {
-                        outOfBlocksSneakStart = System.currentTimeMillis();
-                        lookedBack = false;
-                    }
+            // Start sneak phase once
+            if (!sneakingForBlocks) {
+                sneakingForBlocks = true;
+                sneakStartTime = System.currentTimeMillis();
+            }
 
-                    long elapsed = System.currentTimeMillis() - outOfBlocksSneakStart;
+            long elapsed = System.currentTimeMillis() - sneakStartTime;
 
-                    if (elapsed < SNEAK_DURATION_MS) {
-                        // sneak for 0.7s
-                        mc.thePlayer.movementInput.sneak = true;
-                        mc.thePlayer.movementInput.moveStrafe *= 0.3F;
-                        mc.thePlayer.movementInput.moveForward *= 0.3F;
-                    } else if (!lookedBack) {
-                        // after 0.7s, turn camera around
-                        mc.thePlayer.rotationYaw += 180.0F;
-                        mc.thePlayer.rotationYawHead = mc.thePlayer.rotationYaw;
-                        lookedBack = true;
-                    }
-                } else {
-                    // no longer at edge -> reset
-                    outOfBlocksSneakStart = 0L;
-                    lookedBack = false;
-                }
-                return; // skip normal eagle when out of blocks
+            if (elapsed < SNEAK_DURATION_MS) {
+                // Still in 0.7s sneak window
+                mc.thePlayer.movementInput.sneak = true;
+                mc.thePlayer.movementInput.moveStrafe *= 0.3F;
+                mc.thePlayer.movementInput.moveForward *= 0.3F;
             } else {
-                // got blocks again -> reset
-                outOfBlocksSneakStart = 0L;
-                lookedBack = false;
-            }
+                // 0.7s done - release sneak
+                mc.thePlayer.movementInput.sneak = false;
 
-            if (!mc.thePlayer.movementInput.sneak) {
-                if (this.shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
-                    mc.thePlayer.movementInput.sneak = true;
-                    mc.thePlayer.movementInput.moveStrafe *= 0.3F;
-                    mc.thePlayer.movementInput.moveForward *= 0.3F;
+                // Look back exactly once
+                if (!didLookBack) {
+                    mc.thePlayer.rotationYaw += 180.0F;
+                    mc.thePlayer.rotationYawHead = mc.thePlayer.rotationYaw;
+                    didLookBack = true;
                 }
+
+                // Lock sequence - nothing more until blocks return
+                sequenceDone = true;
+            }
+            return;
+        }
+
+        // Normal eagle with blocks
+        if (!mc.thePlayer.movementInput.sneak) {
+            if (this.shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
+                mc.thePlayer.movementInput.sneak = true;
+                mc.thePlayer.movementInput.moveStrafe *= 0.3F;
+                mc.thePlayer.movementInput.moveForward *= 0.3F;
             }
         }
     }
@@ -143,8 +162,7 @@ public class Eagle extends Module {
     @Override
     public void onDisabled() {
         this.sneakDelay = 0;
-        this.outOfBlocksSneakStart = 0L;
-        this.lookedBack = false;
+        resetSequence();
     }
 
     @Override

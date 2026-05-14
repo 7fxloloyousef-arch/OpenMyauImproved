@@ -8,7 +8,6 @@ import myau.events.TickEvent;
 import myau.module.Module;
 import myau.util.MoveUtil;
 import myau.util.PlayerUtil;
-import myau.util.TimerUtil;
 import myau.property.properties.BooleanProperty;
 import myau.property.properties.IntProperty;
 import net.minecraft.client.Minecraft;
@@ -22,8 +21,8 @@ import java.util.Objects;
 public class Eagle extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
     private int sneakDelay = 0;
-    private final TimerUtil sneakTimer = new TimerUtil();
-    private boolean isSneaking = false;
+    // counts down from 14 ticks (700ms / 50ms per tick = 14 ticks)
+    private int sneakHoldTicks = 0;
 
     public final IntProperty minDelay = new IntProperty("min-delay", 2, 0, 10);
     public final IntProperty maxDelay = new IntProperty("max-delay", 3, 0, 10);
@@ -33,10 +32,6 @@ public class Eagle extends Module {
     public final BooleanProperty blocksOnly = new BooleanProperty("blocks-only", true);
     public final BooleanProperty sneakOnly = new BooleanProperty("sneaking-only", false);
 
-    /**
-     * Returns true if ANY of the 9 hotbar slots contains a block item.
-     * Only returns false when every single hotbar slot has no blocks left.
-     */
     private boolean hotbarHasBlocks() {
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.thePlayer.inventory.getStackInSlot(i);
@@ -87,6 +82,10 @@ public class Eagle extends Module {
                         this.maxDelay.getValue() + 1
                 );
             }
+            // count down the sneak hold
+            if (sneakHoldTicks > 0) {
+                sneakHoldTicks--;
+            }
         }
     }
 
@@ -100,29 +99,22 @@ public class Eagle extends Module {
                 mc.thePlayer.movementInput.moveStrafe /= 0.3F;
             }
 
-            if (!mc.thePlayer.movementInput.sneak) {
-                if (this.shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
-                    // Start sneaking and start the 0.7s timer
-                    if (!isSneaking) {
-                        isSneaking = true;
-                        sneakTimer.reset();
-                    }
-                    mc.thePlayer.movementInput.sneak = true;
-                    mc.thePlayer.movementInput.moveStrafe *= 0.3F;
-                    mc.thePlayer.movementInput.moveForward *= 0.3F;
-                }
+            if (this.shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
+                // Every time conditions are met, reset the 14 tick (700ms) hold counter
+                sneakHoldTicks = 14;
             }
 
-            // Release sneak after 0.7 seconds
-            if (isSneaking && sneakTimer.hasTimeElapsed(700L)) {
-                isSneaking = false;
-                sneakTimer.reset();
-                mc.thePlayer.movementInput.sneak = false;
-            }
-
-            // No blocks left anywhere in hotbar - force sneak off immediately
+            // No blocks left - kill sneak immediately
             if (this.blocksOnly.getValue() && !hotbarHasBlocks()) {
-                isSneaking = false;
+                sneakHoldTicks = 0;
+            }
+
+            // Actually apply sneak based on the tick counter
+            if (sneakHoldTicks > 0) {
+                mc.thePlayer.movementInput.sneak = true;
+                mc.thePlayer.movementInput.moveStrafe *= 0.3F;
+                mc.thePlayer.movementInput.moveForward *= 0.3F;
+            } else {
                 mc.thePlayer.movementInput.sneak = false;
             }
         }
@@ -131,8 +123,7 @@ public class Eagle extends Module {
     @Override
     public void onDisabled() {
         this.sneakDelay = 0;
-        this.isSneaking = false;
-        sneakTimer.reset();
+        this.sneakHoldTicks = 0;
     }
 
     @Override

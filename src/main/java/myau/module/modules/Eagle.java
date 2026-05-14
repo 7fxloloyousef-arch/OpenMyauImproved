@@ -8,6 +8,7 @@ import myau.events.TickEvent;
 import myau.module.Module;
 import myau.util.MoveUtil;
 import myau.util.PlayerUtil;
+import myau.util.TimerUtil;
 import myau.property.properties.BooleanProperty;
 import myau.property.properties.IntProperty;
 import net.minecraft.client.Minecraft;
@@ -19,11 +20,10 @@ import org.lwjgl.input.Keyboard;
 import java.util.Objects;
 
 public class Eagle extends Module {
-
     private static final Minecraft mc = Minecraft.getMinecraft();
-
-    private int sneakTicks = 0;
-    private boolean wasEdge = false;
+    private int sneakDelay = 0;
+    private final TimerUtil sneakTimer = new TimerUtil();
+    private boolean isSneaking = false;
 
     public final IntProperty minDelay = new IntProperty("min-delay", 2, 0, 10);
     public final IntProperty maxDelay = new IntProperty("max-delay", 3, 0, 10);
@@ -33,138 +33,127 @@ public class Eagle extends Module {
     public final BooleanProperty blocksOnly = new BooleanProperty("blocks-only", true);
     public final BooleanProperty sneakOnly = new BooleanProperty("sneaking-only", false);
 
-    public Eagle() {
-        super("Eagle", false);
-    }
-
+    /**
+     * Returns true if ANY of the 9 hotbar slots contains a block item.
+     * Only returns false when every single hotbar slot has no blocks left.
+     */
     private boolean hotbarHasBlocks() {
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.thePlayer.inventory.getStackInSlot(i);
-            if (stack != null && stack.getItem() instanceof ItemBlock && stack.stackSize > 0) {
+            if (stack != null
+                    && stack.getItem() instanceof ItemBlock
+                    && stack.stackSize > 0) {
                 return true;
             }
         }
         return false;
     }
 
-    private boolean isOnEdge() {
+    private boolean canMoveSafely() {
         double[] offset = MoveUtil.predictMovement();
-        return !PlayerUtil.canMove(
-                mc.thePlayer.motionX + offset[0],
-                mc.thePlayer.motionZ + offset[1]
-        );
+        return PlayerUtil.canMove(mc.thePlayer.motionX + offset[0], mc.thePlayer.motionZ + offset[1]);
     }
 
-    private boolean passesChecks() {
-        if (!mc.thePlayer.onGround) {
+    private boolean shouldSneak() {
+        if (this.directionCheck.getValue() && mc.gameSettings.keyBindForward.isKeyDown()) {
             return false;
-        }
-        if (mc.currentScreen != null) {
+        } else if (this.jumpCheck.getValue() && mc.gameSettings.keyBindJump.isKeyDown()) {
             return false;
-        }
-        if (directionCheck.getValue() && mc.gameSettings.keyBindForward.isKeyDown()) {
+        } else if (this.pitchCheck.getValue() && mc.thePlayer.rotationPitch < 69.0F) {
             return false;
-        }
-        if (jumpCheck.getValue() && mc.gameSettings.keyBindJump.isKeyDown()) {
+        } else if (sneakOnly.getValue() && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
             return false;
+        } else {
+            if (this.blocksOnly.getValue()) {
+                if (!hotbarHasBlocks()) return false;
+            }
+            return mc.thePlayer.onGround;
         }
-        if (pitchCheck.getValue() && mc.thePlayer.rotationPitch < 69.0F) {
-            return false;
-        }
-        if (sneakOnly.getValue() && !Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
-            return false;
-        }
-        if (blocksOnly.getValue() && !hotbarHasBlocks()) {
-            return false;
-        }
-        return true;
     }
 
-    private int nextDelay() {
-        int min = minDelay.getValue();
-        int max = maxDelay.getValue();
-        return min == max ? min : RandomUtils.nextInt(min, max + 1);
+    public Eagle() {
+        super("Eagle", false);
     }
 
     @EventTarget(Priority.LOWEST)
     public void onTick(TickEvent event) {
-        if (!isEnabled() || event.getType() != EventType.PRE) {
-            return;
+        if (this.isEnabled() && event.getType() == EventType.PRE) {
+            if (this.sneakDelay > 0) {
+                this.sneakDelay--;
+            }
+            if (this.sneakDelay == 0 && this.canMoveSafely()) {
+                this.sneakDelay = RandomUtils.nextInt(
+                        this.minDelay.getValue(),
+                        this.maxDelay.getValue() + 1
+                );
+            }
         }
-        if (mc.thePlayer == null || mc.theWorld == null) {
-            return;
-        }
-
-        boolean onEdge = isOnEdge();
-
-        if (onEdge && !wasEdge) {
-            // just reached the edge — start sneak timer
-            sneakTicks = nextDelay();
-        } else if (!onEdge) {
-            // safe ground — reset
-            sneakTicks = 0;
-        } else if (onEdge && sneakTicks > 0) {
-            // counting down
-            sneakTicks--;
-        }
-
-        wasEdge = onEdge;
     }
 
     @EventTarget(Priority.LOWEST)
     public void onMoveInput(MoveInputEvent event) {
-        if (!isEnabled() || mc.thePlayer == null) {
-            return;
-        }
+        if (this.isEnabled() && mc.currentScreen == null) {
 
-        if (!passesChecks()) {
-            return;
-        }
+            if (sneakOnly.getValue() && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode()) && shouldSneak()) {
+                mc.thePlayer.movementInput.sneak = false;
+                mc.thePlayer.movementInput.moveForward /= 0.3F;
+                mc.thePlayer.movementInput.moveStrafe /= 0.3F;
+            }
 
-        boolean shouldSneak = isOnEdge() && sneakTicks == 0;
+            if (!mc.thePlayer.movementInput.sneak) {
+                if (this.shouldSneak() && (this.sneakDelay > 0 || this.canMoveSafely())) {
+                    // Start sneaking and start the 0.7s timer
+                    if (!isSneaking) {
+                        isSneaking = true;
+                        sneakTimer.reset();
+                    }
+                    mc.thePlayer.movementInput.sneak = true;
+                    mc.thePlayer.movementInput.moveStrafe *= 0.3F;
+                    mc.thePlayer.movementInput.moveForward *= 0.3F;
+                }
+            }
 
-        // when sneaking-only mode is on, the player is already holding sneak,
-        // so vanilla already applied the 0.3 slowdown — undo it first
-        if (sneakOnly.getValue()
-                && Keyboard.isKeyDown(mc.gameSettings.keyBindSneak.getKeyCode())) {
-            mc.thePlayer.movementInput.sneak = false;
-            mc.thePlayer.movementInput.moveForward /= 0.3F;
-            mc.thePlayer.movementInput.moveStrafe /= 0.3F;
-        }
+            // Release sneak after 0.7 seconds
+            if (isSneaking && sneakTimer.hasTimeElapsed(700L)) {
+                isSneaking = false;
+                sneakTimer.reset();
+                mc.thePlayer.movementInput.sneak = false;
+            }
 
-        if (shouldSneak) {
-            mc.thePlayer.movementInput.sneak = true;
-            mc.thePlayer.movementInput.moveForward *= 0.3F;
-            mc.thePlayer.movementInput.moveStrafe *= 0.3F;
+            // No blocks left anywhere in hotbar - force sneak off immediately
+            if (this.blocksOnly.getValue() && !hotbarHasBlocks()) {
+                isSneaking = false;
+                mc.thePlayer.movementInput.sneak = false;
+            }
         }
     }
 
     @Override
     public void onDisabled() {
-        sneakTicks = 0;
-        wasEdge = false;
+        this.sneakDelay = 0;
+        this.isSneaking = false;
+        sneakTimer.reset();
     }
 
     @Override
     public void verifyValue(String name) {
         switch (name) {
             case "min-delay":
-                if (minDelay.getValue() > maxDelay.getValue()) {
-                    maxDelay.setValue(minDelay.getValue());
+                if (this.minDelay.getValue() > this.maxDelay.getValue()) {
+                    this.maxDelay.setValue(this.minDelay.getValue());
                 }
                 break;
             case "max-delay":
-                if (minDelay.getValue() > maxDelay.getValue()) {
-                    minDelay.setValue(maxDelay.getValue());
+                if (this.minDelay.getValue() > this.maxDelay.getValue()) {
+                    this.minDelay.setValue(this.maxDelay.getValue());
                 }
-                break;
         }
     }
 
     @Override
     public String[] getSuffix() {
-        return Objects.equals(minDelay.getValue(), maxDelay.getValue())
-                ? new String[]{minDelay.getValue().toString()}
-                : new String[]{String.format("%d-%d", minDelay.getValue(), maxDelay.getValue())};
+        return Objects.equals(this.minDelay.getValue(), this.maxDelay.getValue())
+                ? new String[]{this.minDelay.getValue().toString()}
+                : new String[]{String.format("%d-%d", this.minDelay.getValue(), this.maxDelay.getValue())};
     }
 }
